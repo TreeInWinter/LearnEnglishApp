@@ -1,0 +1,17 @@
+{
+  "name": "learn-english-web",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-11-21",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+  "vars": {
+    "TTS_DAILY_CREDITS": "400"
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "TTS_STORAGE", "class_name": "SpeechStore" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SpeechStore"] }]
+}

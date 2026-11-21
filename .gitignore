@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.generated/
+.wrangler/
+.dev.vars*
+.env*
+.local/
+.workbuddy/
+.DS_Store
+__pycache__/
