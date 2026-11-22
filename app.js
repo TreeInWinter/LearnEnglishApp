@@ -17,6 +17,7 @@
   var syncTimer = null;
   var syncInFlight = false;
   var syncQueued = false;
+  var syncReadPending = false;
   var CATS = window.CATEGORIES || [];
   var CAT_MAP = {};
   CATS.forEach(function (c) { CAT_MAP[c.id] = c; });
@@ -158,6 +159,7 @@
       });
       if (!response.ok) throw new Error('progress read failed');
       var remote = await response.json();
+      syncReadPending = false;
       var snapshot = remote && remote.snapshot;
       if (!snapshot) {
         if (!syncMeta.localUpdatedAt) {
@@ -181,10 +183,7 @@
       setSyncStatus(syncQueued ? 'pending' : 'synced');
       if (syncQueued) flushSync();
     } catch (e) {
-      if (!syncMeta.localUpdatedAt && (state.totalPracticed || Object.keys(state.progress || {}).length)) {
-        syncMeta.localUpdatedAt = Date.now();
-        persistSyncMeta();
-      }
+      syncReadPending = true;
       setSyncStatus(navigator.onLine === false ? 'offline' : 'unavailable');
     }
   }
@@ -1937,7 +1936,8 @@
   }
   if (syncEnabled) {
     window.addEventListener('online', function () {
-      if (syncMeta.localUpdatedAt) queueSync();
+      if (syncReadPending) syncFromBackend();
+      else if (syncMeta.localUpdatedAt) queueSync();
       else syncFromBackend();
     });
     window.addEventListener('offline', function () { setSyncStatus('offline'); });
