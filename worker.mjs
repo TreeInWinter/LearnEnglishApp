@@ -178,7 +178,8 @@ export default {
       if (origin && origin !== url.origin) return error(403, 'WRONG_ORIGIN');
       const clientId = progressClient(request);
       if (!clientId) return error(400, 'INVALID_LEARNING_CLIENT');
-      if (request.method === 'PUT' && !request.headers.get('Content-Type')?.toLowerCase().startsWith('application/json')) {
+      const contentType = (request.headers.get('Content-Type') || '').split(';', 1)[0].trim().toLowerCase();
+      if (request.method === 'PUT' && contentType !== 'application/json') {
         return error(415, 'JSON_REQUIRED');
       }
       if (!env.PROGRESS_STORAGE) return error(503, 'PROGRESS_NOT_CONFIGURED');

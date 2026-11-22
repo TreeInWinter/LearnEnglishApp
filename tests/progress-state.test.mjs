@@ -44,3 +44,9 @@ test('accepts UUID-shaped client IDs and rejects arbitrary headers', () => {
   assert.equal(isValidClientId('short'), false);
   assert.equal(isValidClientId('not a client id'), false);
 });
+
+test('rejects falsey or string values where structured progress is required', () => {
+  assert.throws(() => normalizeProgressSnapshot({ progress: 0 }, new Set()), /progress must be an object/i);
+  assert.throws(() => normalizeProgressSnapshot({ progress: { b01: { mastered: 'false' } } }, new Set(['b01'])), /mastered/i);
+  assert.throws(() => normalizeProgressSnapshot({ totalPracticed: '1' }, new Set()), /totalPracticed/i);
+});

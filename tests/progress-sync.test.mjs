@@ -28,15 +28,19 @@ test('serializes only learning fields and keeps local settings out', () => {
   assert.equal(payload.progress.b01.seen, 1);
 });
 
-test('applies a remote learning snapshot without overwriting settings', () => {
+test('merges remote learning records without overwriting settings', () => {
   const sync = loadSync();
-  const target = structuredClone(localState);
-  sync.applySnapshot(target, {
-    progress: { b01: { seen: 3, correct: 3, wrong: 0, streak: 2, mastered: true, lastSeen: '2026-11-22', due: '2026-11-29' } },
-    wrongBook: [], today: null, checkin: { lastDate: '2026-11-22', days: 2 },
+  const target = structuredClone({ ...localState, progress: { b01: { seen: 1, correct: 1, wrong: 0, streak: 1, mastered: false, lastSeen: '2026-11-21', due: '' } } });
+  sync.mergeSnapshot(target, {
+    progress: {
+      b01: { seen: 3, correct: 3, wrong: 0, streak: 2, mastered: true, lastSeen: '2026-11-22', due: '2026-11-29' },
+      b02: { seen: 1, correct: 0, wrong: 1, streak: 0, mastered: false, lastSeen: '2026-11-22', due: '2026-11-22' }
+    },
+    wrongBook: ['b02'], today: null, checkin: { lastDate: '2026-11-22', days: 2 },
     history: { '2026-11-22': { done: 3, correct: 3 } }, totalPracticed: 3, totalCorrect: 3
   });
   assert.equal(target.settings.speech, true);
   assert.equal(target.progress.b01.mastered, true);
+  assert.equal(target.progress.b02.wrong, 1);
   assert.equal(target.totalCorrect, 3);
 });

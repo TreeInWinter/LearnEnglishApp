@@ -38,10 +38,64 @@
     return true;
   }
 
+  function newerProgress(local, remote) {
+    if (!local) return remote;
+    if (!remote) return local;
+    var localDate = String(local.lastSeen || '');
+    var remoteDate = String(remote.lastSeen || '');
+    if (remoteDate > localDate || Number(remote.seen) > Number(local.seen)) return remote;
+    return local;
+  }
+
+  function resultCount(today) {
+    return today && today.results ? Object.keys(today.results).length : 0;
+  }
+
+  function mergeSnapshot(state, snapshot) {
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return false;
+    var progress = {};
+    var ids = Object.keys(state.progress || {}).concat(Object.keys(snapshot.progress || {}));
+    ids.forEach(function (id) {
+      if (Object.prototype.hasOwnProperty.call(progress, id)) return;
+      progress[id] = newerProgress(state.progress && state.progress[id], snapshot.progress && snapshot.progress[id]);
+    });
+    state.progress = progress;
+
+    var localToday = state.today;
+    var remoteToday = snapshot.today;
+    if (!localToday || (remoteToday && (String(remoteToday.date) > String(localToday.date) ||
+        (String(remoteToday.date) === String(localToday.date) && resultCount(remoteToday) >= resultCount(localToday))))) {
+      state.today = remoteToday;
+    }
+
+    var history = {};
+    var dates = Object.keys(state.history || {}).concat(Object.keys(snapshot.history || {}));
+    dates.forEach(function (date) {
+      if (history[date]) return;
+      var localDay = state.history && state.history[date];
+      var remoteDay = snapshot.history && snapshot.history[date];
+      history[date] = {
+        done: Math.max(Number(localDay && localDay.done) || 0, Number(remoteDay && remoteDay.done) || 0),
+        correct: Math.max(Number(localDay && localDay.correct) || 0, Number(remoteDay && remoteDay.correct) || 0)
+      };
+    });
+    state.history = history;
+    state.wrongBook = [...new Set([].concat(state.wrongBook || [], snapshot.wrongBook || []))]
+      .filter(function (id) { return state.progress[id] && state.progress[id].wrong > 0 && !state.progress[id].mastered; });
+
+    var localCheckin = state.checkin || {};
+    var remoteCheckin = snapshot.checkin || {};
+    state.checkin = String(remoteCheckin.lastDate || '') >= String(localCheckin.lastDate || '') ? remoteCheckin : localCheckin;
+    state.totalPracticed = Math.max(Number(state.totalPracticed) || 0, Number(snapshot.totalPracticed) || 0);
+    state.totalCorrect = Math.max(Number(state.totalCorrect) || 0, Number(snapshot.totalCorrect) || 0);
+    return true;
+  }
+
   root.LearningProgressSync = {
     createClientId: createClientId,
     loadMeta: loadMeta,
     snapshotFromState: snapshotFromState,
-    applySnapshot: applySnapshot
+    applySnapshot: applySnapshot,
+    mergeSnapshot: mergeSnapshot
   };
 })(typeof window === 'object' ? window : globalThis);

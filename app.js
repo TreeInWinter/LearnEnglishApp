@@ -113,8 +113,13 @@
     try { localStorage.setItem(SYNC_META_KEY, JSON.stringify(syncMeta)); } catch (e) {}
   }
 
+  function validClientId(value) {
+    return typeof value === 'string' && (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value) || /^[a-z0-9_-]{24,80}$/i.test(value));
+  }
+
   function ensureClientId() {
     if (!syncEnabled) return '';
+    if (!validClientId(syncMeta.clientId)) syncMeta.clientId = '';
     if (syncMeta.clientId) return syncMeta.clientId;
     try {
       syncMeta.clientId = localStorage.getItem(CLIENT_ID_KEY) || '';
@@ -165,19 +170,21 @@
         return;
       }
       var remoteUpdatedAt = Number(snapshot.clientUpdatedAt) || Number(remote.updatedAt) || 0;
-      if (!syncMeta.localUpdatedAt || remoteUpdatedAt > syncMeta.localUpdatedAt) {
-        syncApi.applySnapshot(state, snapshot);
-        save();
-        syncMeta.localUpdatedAt = remoteUpdatedAt;
-      } else if (syncMeta.localUpdatedAt > remoteUpdatedAt) {
-        syncQueued = true;
-      }
+      var localUpdatedAt = syncMeta.localUpdatedAt;
+      syncApi.mergeSnapshot(state, snapshot);
+      save();
+      syncMeta.localUpdatedAt = Math.max(localUpdatedAt, remoteUpdatedAt);
+      if (localUpdatedAt > remoteUpdatedAt) syncQueued = true;
       syncMeta.serverUpdatedAt = Number(remote.updatedAt) || 0;
       syncMeta.lastSyncedAt = Date.now();
       persistSyncMeta();
       setSyncStatus(syncQueued ? 'pending' : 'synced');
       if (syncQueued) flushSync();
     } catch (e) {
+      if (!syncMeta.localUpdatedAt && (state.totalPracticed || Object.keys(state.progress || {}).length)) {
+        syncMeta.localUpdatedAt = Date.now();
+        persistSyncMeta();
+      }
       setSyncStatus(navigator.onLine === false ? 'offline' : 'unavailable');
     }
   }
@@ -512,10 +519,10 @@
     stopAudio();
     var mode = state.settings.ttsVoice;
     var candidates = [];
-    if (mode === 'breeze' && w.mode === 'cloze' && BREEZE_IDS.has(w.id)) {
+    if (mode === 'breeze' && BREEZE_IDS.has(w.id)) {
       candidates.push({ dir: 'breeze', label: 'BreezeTTS · Alma' });
     }
-    if (mode === 'breeze' && w.mode === 'cloze' && cloudEnabled && force && accessToken && navigator.onLine !== false) {
+    if (mode === 'breeze' && cloudEnabled && force && accessToken && navigator.onLine !== false) {
       candidates.push({ cloud: true, label: 'BreezeTTS · Alma' });
     }
     if (w.mode === 'cloze' && mode !== 'browser') {
@@ -1498,7 +1505,7 @@
          Math.round(BANK.length / CATS.length) + ' 词，共 ' + BANK.length + ' 词：精编场景 ' +
          CORE_COUNT + ' 条（手写语境句 + 神经网络语音 mp3，女声 / 男声各一套），扩展句子 ' +
          (BANK.length - CORE_COUNT) + ' 条（数据源 ECDICT 开源词典，按英文释义生成稳定句子）。' +
-         (cloudEnabled ? '学习进度只保存在本机。云端点读通过 Cloudflare 后端生成音频，后续点读可复用。' :
+         (cloudEnabled ? '学习进度会在本机保存，并通过 Cloudflare 后端同步。云端点读生成的音频可复用。' :
            '此本地版本无需后端，预生成音频从网站文件加载。') +
          '页面打开后断网仍可答题；语音能否离线播放取决于文件是否可用或浏览器是否安装了本地音色。' +
          '每日队列会优先安排到期复习（最多 1/4 配额）。</p></div>';
@@ -1931,6 +1938,7 @@
   if (syncEnabled) {
     window.addEventListener('online', function () {
       if (syncMeta.localUpdatedAt) queueSync();
+      else syncFromBackend();
     });
     window.addEventListener('offline', function () { setSyncStatus('offline'); });
   }

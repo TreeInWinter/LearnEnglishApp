@@ -12,11 +12,17 @@ function requiredObject(value, label) {
 }
 
 function boundedInt(value, label, max = Number.MAX_SAFE_INTEGER) {
-  const number = Number(value == null ? 0 : value);
-  if (!Number.isFinite(number) || number < 0 || number > max) {
+  const number = value == null ? 0 : value;
+  if (typeof number !== 'number' || !Number.isInteger(number) || number < 0 || number > max) {
     throw new Error(`${label} must be a non-negative number`);
   }
-  return Math.floor(number);
+  return number;
+}
+
+function boundedBoolean(value, label) {
+  if (value == null) return false;
+  if (typeof value !== 'boolean') throw new Error(`${label} must be a boolean`);
+  return value;
 }
 
 function dateValue(value, label, allowEmpty = true) {
@@ -41,7 +47,7 @@ function normalizeProgressEntry(value, label) {
     correct: boundedInt(source.correct, `${label}.correct`, 1000000),
     wrong: boundedInt(source.wrong, `${label}.wrong`, 1000000),
     streak: boundedInt(source.streak, `${label}.streak`, 1000000),
-    mastered: Boolean(source.mastered),
+    mastered: boundedBoolean(source.mastered, `${label}.mastered`),
     lastSeen: dateValue(source.lastSeen, `${label}.lastSeen`),
     due: dateValue(source.due, `${label}.due`)
   };
@@ -53,7 +59,7 @@ function normalizeToday(value, knownWordIds) {
   const queue = Array.isArray(source.queue) ? source.queue : (() => { throw new Error('today.queue must be an array'); })();
   if (queue.length > MAX_ITEMS) throw new Error('today.queue is too large');
   const normalizedQueue = queue.map((id, index) => wordId(id, knownWordIds, `today.queue[${index}]`));
-  const sourceResults = requiredObject(source.results || {}, 'today.results');
+  const sourceResults = source.results == null ? {} : requiredObject(source.results, 'today.results');
   const results = {};
   for (const [id, result] of Object.entries(sourceResults)) {
     wordId(id, knownWordIds, 'today.results');
@@ -74,7 +80,7 @@ export function normalizeProgressSnapshot(input, knownWordIds) {
   const source = requiredObject(input, 'snapshot');
   if (!(knownWordIds instanceof Set)) throw new Error('knownWordIds must be a Set');
 
-  const sourceProgress = requiredObject(source.progress || {}, 'progress');
+  const sourceProgress = source.progress == null ? {} : requiredObject(source.progress, 'progress');
   const progressEntries = Object.entries(sourceProgress);
   if (progressEntries.length > MAX_ITEMS) throw new Error('progress is too large');
   const progress = {};
