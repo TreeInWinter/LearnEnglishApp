@@ -153,9 +153,9 @@ button{ cursor:pointer; }
 .scenario-box p{ margin:0; color:var(--text-2); font-size:14.5px; line-height:1.75; }
 .sentence-label{ justify-content:space-between; }
 
-.sentence-block{ margin-bottom:22px; }
+.sentence-block{ margin-bottom:20px; }
 .sentence{
-  font-family:var(--serif); font-size:23px; line-height:1.75;
+  font-family:var(--serif); font-size:23px; line-height:1.85;
   color:var(--text); margin:0; letter-spacing:.1px;
 }
 .blank{
@@ -168,6 +168,93 @@ button{ cursor:pointer; }
 .blank.wrong{ color:var(--err); border-bottom-color:var(--err); border-bottom-style:solid; }
 .sentence-zh{
   margin:12px 0 0; color:var(--text-3); font-size:13.5px; line-height:1.7;
+}
+
+/* ---------------- inline slot fill-in ---------------- */
+.blank.cloze-result{ min-width:0; white-space:normal; }
+.inline-blank{
+  position:relative; display:inline-flex; max-width:100%;
+  align-items:baseline; vertical-align:baseline;
+  padding:1px 4px 2px; border-radius:7px;
+  cursor:text; transition:background-color .16s;
+}
+.inline-blank:hover{ background:rgba(47,95,224,.045); }
+.inline-blank.is-focused{ background:rgba(47,95,224,.065); }
+.inline-blank.is-shake{ animation:blankShake .3s ease; }
+@keyframes blankShake{
+  0%, 100%{ transform:translateX(0); }
+  25%{ transform:translateX(-4px); }
+  55%{ transform:translateX(4px); }
+  80%{ transform:translateX(-2px); }
+}
+
+.inline-input{
+  position:absolute; left:0; top:0; width:1px; height:100%;
+  opacity:0; margin:0; padding:0; border:0; outline:none;
+  font-size:16px; pointer-events:none;
+}
+
+.inline-slots{
+  display:inline-flex; flex-wrap:wrap; align-items:baseline; row-gap:8px;
+}
+.slot-word{
+  display:inline-flex; align-items:baseline; gap:3.5px; white-space:nowrap;
+}
+.slot{
+  position:relative; display:inline-flex; align-items:baseline; justify-content:center;
+  min-width:.74em; padding:0 1px; line-height:1.22;
+  font-family:var(--serif); font-weight:600; color:var(--brand);
+  border-bottom:2px solid #b8c7e4; border-radius:3px 3px 0 0;
+  transition:border-color .14s, background-color .14s, color .14s;
+  user-select:none;
+}
+.slot.is-filled{ color:var(--text); border-bottom-color:var(--brand); }
+.inline-blank.is-focused .slot.is-active{
+  border-bottom-color:var(--brand); background:var(--brand-soft);
+}
+.inline-blank.is-focused .slot.is-active::before{
+  content:""; position:absolute; left:1px; top:14%; bottom:14%;
+  width:2px; border-radius:1px; background:var(--brand);
+  animation:caretBlink 1s steps(1) infinite;
+}
+.inline-blank.is-focused .slot.is-caret-end::after{
+  content:""; position:absolute; right:0; top:14%; bottom:14%;
+  width:2px; border-radius:1px; background:var(--brand);
+  animation:caretBlink 1s steps(1) infinite;
+}
+.inline-blank.is-focused .slot.is-selected{
+  background:rgba(47,95,224,.22); border-bottom-color:var(--brand);
+}
+@keyframes caretBlink{
+  0%, 49%{ opacity:1; }
+  50%, 100%{ opacity:0; }
+}
+.slot-ghost{ color:var(--brand); opacity:.38; font-weight:600; }
+.slot-sep{
+  display:inline-flex; align-items:baseline; justify-content:center;
+  padding:0 2px; color:var(--text-2); font-family:var(--serif); font-weight:600;
+  user-select:none;
+}
+.slot-space{
+  display:inline-block; width:.68em; user-select:none;
+}
+.blank-tip{
+  margin-top:10px; font-size:12.5px; color:var(--text-3); line-height:1.5;
+}
+
+.practice-actions{
+  display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+}
+
+.fb-yours{
+  font-size:13.5px; color:var(--text-2); margin:2px 0 8px;
+}
+.fb-yours span{
+  font-family:var(--serif); font-size:16px; font-weight:600; letter-spacing:.3px;
+}
+.fb-yours .diff-bad{
+  background:rgba(209,69,63,.16); color:var(--err);
+  border-radius:3px; padding:0 2px;
 }
 
 .speak-btn{
@@ -423,7 +510,10 @@ button{ cursor:pointer; }
   .topbar{ padding:18px 2px 14px; }
   .brand-text strong{ font-size:18px; }
   .card{ padding:20px 17px; border-radius:14px; }
-  .sentence{ font-size:20px; }
+  .sentence{ font-size:19.5px; line-height:1.85; }
+  .slot-word{ gap:2.5px; }
+  .slot{ min-width:.66em; }
+  .practice-actions .btn.primary{ flex:1 1 100%; }
   .answer-row{ flex-direction:column; }
   .answer-row .btn{ width:100%; }
   .tab{ min-width:76px; font-size:13px; padding:11px 8px 12px; }

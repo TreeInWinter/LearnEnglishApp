@@ -593,77 +593,53 @@
 
   /* 将答案解析为槽位模板：字母/数字为可填槽，空格为词间分隔，连字符等为固定符号 */
   function parseAnswerTemplate(answer) {
-    var raw = String(answer || '').trim().replace(/\s+/g, ' ');
+    var raw = String(answer || '').trim().replace(/\s/g, ' ');
     var tokens = [];
-    var words = [];
     var currentWord = [];
-    var seps = [];
-    var slotIndex = 0;
-    var spaceCount = 0;
+    var words = [currentWord];
+    var hasSeparator = false;
+    var slotCount = 0;
 
     for (var i = 0; i < raw.length; i++) {
       var ch = raw.charAt(i);
       if (ch === ' ') {
-        if (currentWord.length) {
-          words.push(currentWord);
-          currentWord = [];
-        }
-        tokens.push({ type: 'space', text: ' ', afterSlot: slotIndex });
-        spaceCount++;
-      } else if (/[A-Za-z0-9]/.test(ch)) {
-        var tok = { type: 'char', slotIndex: slotIndex, expected: ch };
+        tokens.push({ type: 'space', text: ch });
+        currentWord = [];
+        words.push(currentWord);
+      } else {
+        var isSlot = /[A-Za-z0-9]/.test(ch);
+        var tok = isSlot ? { type: 'char', slotIndex: slotCount++, expected: ch } : { type: 'sep', text: ch };
+        if (!isSlot) hasSeparator = true;
         tokens.push(tok);
         currentWord.push(tok);
-        slotIndex++;
-      } else {
-        var sep = { type: 'sep', text: ch, afterSlot: slotIndex };
-        tokens.push(sep);
-        currentWord.push(sep);
-        if (seps.indexOf(ch) === -1) seps.push(ch);
       }
     }
-    if (currentWord.length) words.push(currentWord);
 
     return {
-      raw: raw,
       tokens: tokens,
       words: words,
-      seps: seps,
-      slotCount: slotIndex,
-      spaceCount: spaceCount
+      hasSeparator: hasSeparator,
+      slotCount: slotCount,
+      spaceCount: words.length - 1
     };
   }
 
-  /* 将用户输入的纯字母序列按模板还原为含空格与固定符号的答案字符串 */
+  /* 字母格填满后，把预留的空格和固定符号还原到答案里。 */
   function assembleAnswer(tpl, letters) {
-    var s = String(letters || '');
-    if (!s) return '';
-    var out = '';
-    for (var i = 0; i < tpl.tokens.length; i++) {
-      var t = tpl.tokens[i];
-      if (t.type === 'char') {
-        if (t.slotIndex < s.length) out += s.charAt(t.slotIndex);
-      } else if (t.type === 'space' || t.type === 'sep') {
-        if (s.length > t.afterSlot && t.afterSlot > 0) out += t.text;
-      }
-    }
-    return out;
+    return tpl.tokens.map(function (tok) {
+      return tok.type === 'char' ? letters.charAt(tok.slotIndex) : tok.text;
+    }).join('');
   }
 
-  function ghostCountFor(w, hintLevel, slotCount) {
-    if (w.mode === 'define') return Math.min(hintLevel >= 1 ? 2 : 1, slotCount);
-    return hintLevel >= 1 ? Math.min(1, slotCount) : 0;
-  }
-
-  function inlineBlankHtml(w, s, tpl) {
+  function inlineBlankHtml(s, tpl) {
     var draft = cleanSlotChars(s.draft || '').slice(0, tpl.slotCount);
-    var ghostCount = ghostCountFor(w, s.hintLevel || 0, tpl.slotCount);
-    var label = w.mode === 'define' ? '输入英文单词答案' : '在句子空缺处输入英文单词或词组';
+    var ghostCount = s.hintLevel ? 1 : 0;
 
-    var h = '<span class="inline-blank" id="inlineBlank">';
-    h += '<input class="inline-input" id="answerInput" type="text" ' +
+    var h = '<span class="inline-blank">';
+    h += '<input class="inline-input" type="text" ' +
          'autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" ' +
-         'inputmode="text" aria-label="' + label + '" value="' + esc(draft) + '">';
+         'inputmode="text" enterkeyhint="done" aria-label="在句子空缺处输入英文答案" ' +
+         'aria-describedby="cloze-blank-tip-' + s.view + '" value="' + esc(draft) + '">';
     h += '<span class="inline-slots" aria-hidden="true">';
     tpl.words.forEach(function (wordTokens, wi) {
       if (wi > 0) h += '<span class="slot-space" title="空格"></span>';
@@ -686,32 +662,30 @@
     return h;
   }
 
-  function blankMetaTip(w, tpl) {
-    var parts = [];
-    if (tpl.spaceCount > 0) {
-      parts.push((tpl.spaceCount + 1) + ' 个词（' + tpl.slotCount + ' 个字母，' + tpl.spaceCount + ' 个空格）');
-    } else {
-      parts.push(tpl.slotCount + ' 个字母');
-    }
-    if (tpl.seps.length) parts.push('含固定符号 ' + tpl.seps.join(' '));
-    if (w.mode === 'define') parts.push('首字母已给出');
-    parts.push('点击空缺处直接输入，按 Enter 提交');
-    return '<div class="blank-tip">' + esc(parts.join(' · ')) + '</div>';
+  function blankMetaTip(tpl, view) {
+    var parts = [tpl.slotCount + ' 个字母'];
+    if (tpl.spaceCount) parts.push(tpl.spaceCount + ' 个空格（已留好）');
+    if (tpl.hasSeparator) parts.push('固定符号已填好');
+    parts.push('在句中直接输入，按 Enter 提交');
+    return '<div class="blank-tip" id="cloze-blank-tip-' + view + '">' + esc(parts.join(' · ')) + '</div>';
   }
 
   function sentenceHtml(w, s, tpl, filled, status) {
     var blank = filled
-      ? '<span class="blank ' + (status === 'ok' ? 'correct' : 'wrong') + '">' + esc(filled) + '</span>'
-      : inlineBlankHtml(w, s, tpl);
-    return esc(w.sentence).replace('___', blank);
+      ? '<span class="blank cloze-result ' + (status === 'ok' ? 'correct' : 'wrong') + '">' + esc(filled) + '</span>'
+      : inlineBlankHtml(s, tpl);
+    return esc(w.sentence).replace('___', function () { return blank; });
   }
 
-  /* 扩展词题面：直接在按真实词长生成的槽位上输入，首字母淡色提示消歧 */
-  function maskWord(w, s, tpl, filled, status) {
+  /* 释义题保留首字母提示及自由输入，以接受长度不同的同义词。 */
+  function maskWord(w, filled, status) {
     if (filled) {
       return '<span class="blank ' + (status === 'ok' ? 'correct' : 'wrong') + '">' + esc(filled) + '</span>';
     }
-    return inlineBlankHtml(w, s, tpl);
+    var n = Math.min(w.word.length, 16);
+    return '<span class="mask-letters"><b class="mask-first">' + esc(w.word.charAt(0)) + '</b>' +
+           new Array(n).join('<i></i>') + '</span>' +
+           '<span class="mask-len">' + w.word.length + ' 个字母 · 首字母已给出</span>';
   }
 
   function renderUserDiff(userText, answerText) {
@@ -735,7 +709,7 @@
     var ok = !!s.lastOk;
     var shownAnswer = feedback ? w.word : '';
     var isDefine = w.mode === 'define';
-    var tpl = parseAnswerTemplate(w.word);
+    var tpl = isDefine ? null : parseAnswerTemplate(w.word);
 
     var html = '<div class="card">';
     html += '<div class="practice-head">';
@@ -761,8 +735,7 @@
       html += '<div class="sentence-block">';
       html += '<div class="sentence-label"><span>根据释义写出英文单词</span>' +
               '<button class="speak-btn" data-action="speak" data-id="' + w.id + '">🔊 听读音</button></div>';
-      html += '<p class="sentence sentence-define" lang="en">' + maskWord(w, s, tpl, shownAnswer, ok ? 'ok' : 'bad') + '</p>';
-      if (!feedback) html += blankMetaTip(w, tpl);
+      html += '<p class="sentence" lang="en">' + maskWord(w, shownAnswer, ok ? 'ok' : 'bad') + '</p>';
       html += '</div>';
     } else {
       html += '<div class="scenario-box" style="' + catStyle(w.cat) + '">';
@@ -772,14 +745,22 @@
       html += '<div class="sentence-label"><span>补全这句话</span>' +
               '<button class="speak-btn" data-action="speak" data-id="' + w.id + '">🔊 朗读</button></div>';
       html += '<p class="sentence" lang="en">' + sentenceHtml(w, s, tpl, shownAnswer, ok ? 'ok' : 'bad') + '</p>';
-      if (!feedback) html += blankMetaTip(w, tpl);
+      if (!feedback) html += blankMetaTip(tpl, s.view);
       if (feedback) html += '<p class="sentence-zh">' + esc(w.translation) + '</p>';
       html += '</div>';
     }
 
     if (!feedback) {
-      html += '<div class="practice-actions">';
+      if (isDefine) {
+        html += '<div class="answer-row"><input class="answer-input" type="text" ' +
+                'autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" ' +
+                'aria-label="输入英文单词答案" placeholder="拼出这个英文单词，按 Enter 提交" ' +
+                'value="' + esc(s.draft || '') + '">';
+      } else {
+        html += '<div class="practice-actions">';
+      }
       html += '<button class="btn primary" data-action="submit">提交</button>';
+      if (isDefine) html += '</div><div class="tool-row">';
       html += '<button class="btn ghost sm" data-action="hint">' + (s.hintLevel === 0 ? '提示' : s.hintLevel === 1 ? '再给点提示' : '看答案（记为未掌握）') + '</button>';
       html += '<button class="btn soft sm" data-action="skip">不认识，看答案</button>';
       html += '</div>';
@@ -846,12 +827,28 @@
 
   var lastImeToastAt = 0;
 
-  function bindPracticeInput(s) {
-    if (!s || s.done || s.phase !== 'answering') return;
+  function activePracticeMount() {
+    if (!session) return null;
+    return document.getElementById(session.view === 'review' ? 'reviewMount' : 'todayMount');
+  }
+
+  function bindPracticeInput(mount, s) {
+    if (!mount || !s || s.done || s.phase !== 'answering') return;
     var w = wordById(s.queue[s.idx]);
-    var blank = document.getElementById('inlineBlank');
-    var inp = document.getElementById('answerInput');
-    if (!w || !blank || !inp) return;
+    if (!w) return;
+    if (w.mode === 'define') {
+      var defineInput = mount.querySelector('.answer-input');
+      if (defineInput) {
+        defineInput.addEventListener('input', function () { s.draft = this.value; });
+        defineInput.addEventListener('keydown', onAnswerKey);
+        defineInput.focus();
+        defineInput.setSelectionRange(defineInput.value.length, defineInput.value.length);
+      }
+      return;
+    }
+    var blank = mount.querySelector('.inline-blank');
+    var inp = mount.querySelector('.inline-input');
+    if (!blank || !inp) return;
 
     var tpl = parseAnswerTemplate(w.word);
     var slots = Array.prototype.slice.call(blank.querySelectorAll('.slot'));
@@ -1011,12 +1008,9 @@
   /* ---------- 今日练习 ---------- */
   function renderToday() {
     if (!session || session.view !== 'today') session = makeDailySession();
-    document.getElementById('todayMount').innerHTML = renderPractice(session);
-    var inp = document.getElementById('answerInput');
-    if (inp && session.phase === 'answering') {
-      inp.focus();
-      inp.addEventListener('keydown', onAnswerKey);
-    }
+    var mount = document.getElementById('todayMount');
+    mount.innerHTML = renderPractice(session);
+    bindPracticeInput(mount, session);
   }
 
   /* ---------- 词库（分页渲染，避免 12000 条 DOM 卡顿） ---------- */
@@ -1139,10 +1133,10 @@
 
   /* ---------- 错词本 ---------- */
   function renderReview() {
+    var mount = document.getElementById('reviewMount');
     if (session && session.view === 'review' && !session.done) {
-      document.getElementById('reviewMount').innerHTML = renderPractice(session);
-      var inp = document.getElementById('answerInput');
-      if (inp && session.phase === 'answering') { inp.focus(); inp.addEventListener('keydown', onAnswerKey); }
+      mount.innerHTML = renderPractice(session);
+      bindPracticeInput(mount, session);
       return;
     }
     if (session && session.view === 'review' && session.done) {
@@ -1452,16 +1446,41 @@
   /* ============================================================
    *  交互
    * ============================================================ */
+  function shakeBlank(mount) {
+    var blank = mount && mount.querySelector('.inline-blank');
+    if (!blank) return;
+    blank.classList.remove('is-shake');
+    void blank.offsetWidth;
+    blank.classList.add('is-shake');
+  }
+
   function submitAnswer(skip) {
     if (!session || session.done || session.phase !== 'answering') return;
     var w = wordById(session.queue[session.idx]);
     if (!w) return;
-    var inp = document.getElementById('answerInput');
-    var val = skip ? '' : (inp ? inp.value : '');
-    if (!skip && !normalize(val)) { if (inp) inp.focus(); return; }
+    var mount = activePracticeMount();
+    var isDefine = w.mode === 'define';
+    var inp = mount ? mount.querySelector(isDefine ? '.answer-input' : '.inline-input') : null;
+    var val = skip ? '' : (inp ? inp.value : (session.draft || ''));
+    if (!skip && !isDefine) {
+      var tpl = parseAnswerTemplate(w.word);
+      var letters = cleanSlotChars(val).slice(0, tpl.slotCount);
+      if (letters.length < tpl.slotCount) {
+        shakeBlank(mount);
+        toast('还有 ' + (tpl.slotCount - letters.length) + ' 格没填');
+        if (inp) inp.focus();
+        return;
+      }
+      val = assembleAnswer(tpl, letters);
+    }
+    if (!skip && !normalize(val)) {
+      if (inp) inp.focus();
+      return;
+    }
     var ok = skip ? false : isCorrect(val, w);
 
     session.lastInput = skip ? '' : val;
+    session.draft = '';
     session.lastOk = ok;
     session.synonymHit = skip ? '' : synonymOf(val, w);
     session.phase = 'feedback';
@@ -1481,6 +1500,7 @@
     session.phase = 'answering';
     session.lastOk = null;
     session.lastInput = '';
+    session.draft = '';
     session.synonymHit = '';
     session.hintLevel = 0;
     if (session.idx >= session.queue.length) session.done = true;
@@ -1513,7 +1533,7 @@
     var exclude = (state.today && state.today.date === today()) ? state.today.queue.slice() : [];
     var q = buildQueue(state.settings.dailyGoal, exclude.length < BANK.length ? exclude : null);
     session = { view: 'today', mode: 'extra', queue: q, idx: 0, done: false,
-                phase: 'answering', lastOk: null, lastInput: '', hintLevel: 0, correctCount: 0 };
+                phase: 'answering', lastOk: null, lastInput: '', draft: '', hintLevel: 0, correctCount: 0 };
     state.view = 'today'; save(); renderAll();
   }
 
@@ -1523,13 +1543,13 @@
     // 错得多的排前面
     q.sort(function (a, b) { return getP(b).wrong - getP(a).wrong; });
     session = { view: 'review', mode: 'review', queue: q, idx: 0, done: false,
-                phase: 'answering', lastOk: null, lastInput: '', hintLevel: 0, correctCount: 0 };
+                phase: 'answering', lastOk: null, lastInput: '', draft: '', hintLevel: 0, correctCount: 0 };
     state.view = 'review'; save(); renderAll();
   }
 
   function practiceOne(id) {
     session = { view: 'today', mode: 'extra', queue: [id], idx: 0, done: false,
-                phase: 'answering', lastOk: null, lastInput: '', hintLevel: 0, correctCount: 0 };
+                phase: 'answering', lastOk: null, lastInput: '', draft: '', hintLevel: 0, correctCount: 0 };
     state.view = 'today'; save(); renderAll();
   }
 
@@ -1550,7 +1570,7 @@
   }
 
   function onAnswerKey(e) {
-    if (e.key !== 'Enter') return;
+    if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229 || e.repeat) return;
     e.preventDefault();
     if (!session) return;
     if (session.phase === 'answering') submitAnswer(false);
@@ -1702,13 +1722,35 @@
     }
   });
 
-  /* 全局键盘：反馈阶段按 Enter 进入下一题（输入框已 disabled 时） */
+  /* 全局键盘：
+   * 1) 反馈阶段按 Enter 进入下一题
+   * 2) 答题阶段若焦点不在输入框（如刚点完「朗读」按钮），直接敲字母或退格自动聚焦到句中空缺处 */
   document.addEventListener('keydown', function (e) {
-    if (e.key !== 'Enter' || !session || session.done) return;
-    if (session.phase !== 'feedback') return;
-    if (e.target && e.target.tagName === 'INPUT') return;
+    if (!session || session.done) return;
     var v = state.view;
-    if (v === 'today' || v === 'review') { e.preventDefault(); nextQuestion(); }
+    if (v !== 'today' && v !== 'review') return;
+    var tag = e.target && e.target.tagName;
+
+    if (session.phase === 'feedback') {
+      if (e.key !== 'Enter' || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON') return;
+      e.preventDefault();
+      nextQuestion();
+      return;
+    }
+
+    if (session.phase === 'answering' && tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      var mount = activePracticeMount();
+      var inp = mount && mount.querySelector('.inline-input');
+      if (!inp) return;
+      if (e.key === 'Enter' && tag !== 'BUTTON') {
+        e.preventDefault();
+        submitAnswer(false);
+      } else if (e.key === 'Backspace' || (e.key.length === 1 && /[A-Za-z0-9]/.test(e.key))) {
+        inp.focus();
+        try { inp.setSelectionRange(inp.value.length, inp.value.length); } catch (err) {}
+      }
+    }
   });
 
   /* ---------- 启动 ---------- */
