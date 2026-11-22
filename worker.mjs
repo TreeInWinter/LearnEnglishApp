@@ -42,8 +42,8 @@ function progressClient(request) {
 }
 
 export class ProgressStore extends DurableObject {
-  constructor(ctx) {
-    super(ctx);
+  constructor(ctx, env) {
+    super(ctx, env);
     this.storage = ctx.storage;
     this.knownWordIds = new Set(Object.keys(bank));
   }

@@ -17,11 +17,11 @@ for (const [id, , word] of sandbox.window.EXTENDED_BANK_RAW) bank[id] = word;
 fs.mkdirSync(generated, { recursive: true });
 fs.writeFileSync(path.join(generated, 'speech-bank.json'), JSON.stringify(bank));
 fs.mkdirSync(out, { recursive: true });
-for (const file of ['app.js', 'styles.css', 'words.js', 'bank-extended.js', 'sentence-prompts.js', 'ECDICT-LICENSE.txt']) {
+for (const file of ['app.js', 'styles.css', 'words.js', 'bank-extended.js', 'sentence-prompts.js', 'progress-sync.js', 'ECDICT-LICENSE.txt']) {
   fs.copyFileSync(path.join(root, file), path.join(out, file));
 }
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-fs.writeFileSync(path.join(out, 'index.html'), html.replace('<script src="app.js"></script>', '<script>window.CLOUD_TTS_ENABLED = true;</script>\n<script src="app.js"></script>'));
+fs.writeFileSync(path.join(out, 'index.html'), html.replace('<script src="app.js"></script>', '<script>window.CLOUD_TTS_ENABLED = true; window.LEARNING_SYNC_ENABLED = true;</script>\n<script src="app.js"></script>'));
 const audio = path.join(out, 'audio');
 fs.mkdirSync(audio, { recursive: true });
 fs.copyFileSync(path.join(root, 'audio/breeze-manifest.js'), path.join(audio, 'breeze-manifest.js'));

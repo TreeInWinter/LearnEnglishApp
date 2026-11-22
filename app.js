@@ -6,6 +6,17 @@
   'use strict';
 
   var STORE_KEY = 'cloze_state_v1';
+  var SYNC_META_KEY = 'cloze_sync_v1';
+  var CLIENT_ID_KEY = 'cloze_client_id_v1';
+  var syncEnabled = window.LEARNING_SYNC_ENABLED === true && !!window.LearningProgressSync;
+  var syncApi = window.LearningProgressSync;
+  var syncMeta = syncEnabled
+    ? syncApi.loadMeta(localStorage, SYNC_META_KEY)
+    : { clientId: '', localUpdatedAt: 0, serverUpdatedAt: 0, lastSyncedAt: 0 };
+  var syncStatus = syncEnabled ? 'idle' : 'local';
+  var syncTimer = null;
+  var syncInFlight = false;
+  var syncQueued = false;
   var CATS = window.CATEGORIES || [];
   var CAT_MAP = {};
   CATS.forEach(function (c) { CAT_MAP[c.id] = c; });
@@ -96,6 +107,133 @@
   }
 
   var state = load();
+
+  function persistSyncMeta() {
+    if (!syncEnabled) return;
+    try { localStorage.setItem(SYNC_META_KEY, JSON.stringify(syncMeta)); } catch (e) {}
+  }
+
+  function ensureClientId() {
+    if (!syncEnabled) return '';
+    if (syncMeta.clientId) return syncMeta.clientId;
+    try {
+      syncMeta.clientId = localStorage.getItem(CLIENT_ID_KEY) || '';
+    } catch (e) {}
+    if (!syncMeta.clientId) syncMeta.clientId = syncApi.createClientId();
+    try { localStorage.setItem(CLIENT_ID_KEY, syncMeta.clientId); } catch (e) {}
+    persistSyncMeta();
+    return syncMeta.clientId;
+  }
+
+  function setSyncStatus(value) {
+    syncStatus = value;
+    if (state.view === 'settings' && document.getElementById('settingsMount')) renderSettings();
+  }
+
+  function markProgressDirty() {
+    if (!syncEnabled) return;
+    syncMeta.localUpdatedAt = Date.now();
+    persistSyncMeta();
+    queueSync();
+  }
+
+  function progressSnapshot() {
+    return syncApi.snapshotFromState(state, syncMeta.localUpdatedAt);
+  }
+
+  async function syncFromBackend() {
+    if (!syncEnabled) return;
+    ensureClientId();
+    setSyncStatus('syncing');
+    try {
+      var response = await fetch('/api/progress', {
+        method: 'GET',
+        cache: 'no-store',
+        headers: { 'X-Learning-Client': syncMeta.clientId }
+      });
+      if (!response.ok) throw new Error('progress read failed');
+      var remote = await response.json();
+      var snapshot = remote && remote.snapshot;
+      if (!snapshot) {
+        if (!syncMeta.localUpdatedAt) {
+          syncMeta.localUpdatedAt = Date.now();
+          persistSyncMeta();
+        }
+        syncQueued = true;
+        setSyncStatus('pending');
+        flushSync();
+        return;
+      }
+      var remoteUpdatedAt = Number(snapshot.clientUpdatedAt) || Number(remote.updatedAt) || 0;
+      if (!syncMeta.localUpdatedAt || remoteUpdatedAt > syncMeta.localUpdatedAt) {
+        syncApi.applySnapshot(state, snapshot);
+        save();
+        syncMeta.localUpdatedAt = remoteUpdatedAt;
+      } else if (syncMeta.localUpdatedAt > remoteUpdatedAt) {
+        syncQueued = true;
+      }
+      syncMeta.serverUpdatedAt = Number(remote.updatedAt) || 0;
+      syncMeta.lastSyncedAt = Date.now();
+      persistSyncMeta();
+      setSyncStatus(syncQueued ? 'pending' : 'synced');
+      if (syncQueued) flushSync();
+    } catch (e) {
+      setSyncStatus(navigator.onLine === false ? 'offline' : 'unavailable');
+    }
+  }
+
+  async function flushSync() {
+    if (!syncEnabled || syncInFlight || !syncQueued) return;
+    ensureClientId();
+    syncQueued = false;
+    syncInFlight = true;
+    var sentAt = syncMeta.localUpdatedAt || Date.now();
+    if (!syncMeta.localUpdatedAt) {
+      syncMeta.localUpdatedAt = sentAt;
+      persistSyncMeta();
+    }
+    setSyncStatus('syncing');
+    try {
+      var response = await fetch('/api/progress', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'X-Learning-Client': syncMeta.clientId },
+        body: JSON.stringify(progressSnapshot())
+      });
+      if (!response.ok) throw new Error('progress write failed');
+      var result = await response.json();
+      syncMeta.serverUpdatedAt = Number(result.updatedAt) || 0;
+      syncMeta.lastSyncedAt = Date.now();
+      persistSyncMeta();
+      setSyncStatus(syncMeta.localUpdatedAt === sentAt ? 'synced' : 'pending');
+      if (syncMeta.localUpdatedAt !== sentAt) syncQueued = true;
+    } catch (e) {
+      syncQueued = true;
+      setSyncStatus(navigator.onLine === false ? 'offline' : 'unavailable');
+    } finally {
+      syncInFlight = false;
+      if (syncQueued && syncStatus === 'pending') queueSync();
+    }
+  }
+
+  function queueSync() {
+    if (!syncEnabled) return;
+    syncQueued = true;
+    setSyncStatus('pending');
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(flushSync, 250);
+  }
+
+  function syncStatusLabel() {
+    return {
+      local: '仅本地',
+      idle: '准备同步',
+      syncing: '同步中…',
+      pending: '等待同步',
+      synced: '已同步',
+      offline: '离线，已保存在本机',
+      unavailable: '云端暂不可用，已保存在本机'
+    }[syncStatus] || '准备同步';
+  }
 
   function load() {
     var d = defaults();
@@ -190,6 +328,7 @@
     var d = today();
     if (state.today && state.today.date === d && state.today.queue && state.today.queue.length) return;
     state.today = { date: d, queue: buildQueue(state.settings.dailyGoal), results: {} };
+    markProgressDirty();
     save();
   }
 
@@ -341,6 +480,7 @@
     var h = state.history[today()] || { done: 0, correct: 0 };
     h.done++; if (ok) h.correct++;
     state.history[today()] = h;
+    markProgressDirty();
     save();
   }
 
@@ -1327,8 +1467,15 @@
          'data-action="toggle-speech" aria-label="自动朗读开关"></button></div></div>';
     h += '</div>';
 
+    if (syncEnabled) {
+      h += '<div class="card"><h3 class="section-title">云端学习进度</h3>' +
+           '<div class="setting-row"><div class="setting-info"><h4>匿名同步</h4>' +
+           '<p>学习记录会用本浏览器的匿名标识保存到后端；练习和导出仍可在离线时使用。</p></div>' +
+           '<div class="setting-control"><span class="sync-state ' + syncStatus + '">' + esc(syncStatusLabel()) + '</span></div></div></div>';
+    }
+
     h += '<div class="card"><h3 class="section-title">数据管理</h3>' +
-         '<p class="section-sub">全部数据只存在这台设备的浏览器里，零云端。换设备或清缓存前，请先导出备份。</p>' +
+         '<p class="section-sub">学习进度默认保存在本机，并会在云端同步开启时备份到后端。换设备或清缓存前，请先导出备份。</p>' +
          '<div class="setting-row"><div class="setting-info"><h4>导出 / 导入进度</h4>' +
          '<p>导出为 JSON 文件，包含进度、错词本、打卡与设置。</p></div>' +
          '<div class="setting-control"><div class="data-actions">' +
@@ -1430,6 +1577,7 @@
     } else {
       state.today.queue = doneIds.concat(buildQueue(remaining, doneIds));
     }
+    markProgressDirty();
     // 只重建正在进行的「每日练习」会话；加练 / 错词复习 / 词库单条练习不打断
     if (session && session.view === 'today' && session.mode === 'daily') {
       session = makeDailySession();
@@ -1646,6 +1794,8 @@
         localStorage.setItem(STORE_KEY, JSON.stringify(d));
         state = load();
         session = null;
+        markProgressDirty();
+        save();
         renderAll();
         toast('导入成功，进度已恢复');
       } catch (e) { toast('导入失败：文件格式不正确'); }
@@ -1659,6 +1809,7 @@
     state = defaults();
     state.settings = s;
     session = null;
+    markProgressDirty();
     save(); renderAll();
     toast('进度已重置');
   }
@@ -1777,7 +1928,14 @@
       };
     } catch (e) {}
   }
+  if (syncEnabled) {
+    window.addEventListener('online', function () {
+      if (syncMeta.localUpdatedAt) queueSync();
+    });
+    window.addEventListener('offline', function () { setSyncStatus('offline'); });
+  }
   if (state.today && state.today.date !== today()) state.today = null;
   if (state.view === 'today') session = makeDailySession();
   renderAll();
+  if (syncEnabled) syncFromBackend();
 })();
