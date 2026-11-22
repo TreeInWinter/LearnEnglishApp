@@ -21,7 +21,8 @@
     BANK.push({
       id: r[0], cat: r[1], word: r[2], phonetic: r[3], pos: r[4],
       meaning: r[5], meaningEn: r[6], level: r[7], frq: r[8], tier: r[9],
-      accepted: [], mode: 'define', scene: '', sentence: '',
+      accepted: [], mode: 'define', scene: '',
+      sentence: window.generateClozeSentence(r[2], r[4], r[6]),
       translation: '', collocation: ''
     });
   });
@@ -30,16 +31,17 @@
   var CORE_COUNT = BANK.filter(function (w) { return w.mode === 'cloze'; }).length;
   var BREEZE_IDS = new Set(window.BREEZE_AUDIO_IDS || []);
   var BREEZE_WORD_COUNT = BANK.filter(function (w) { return w.mode === 'define' && BREEZE_IDS.has(w.id); }).length;
-  var BREEZE_SENTENCE_COUNT = BREEZE_IDS.size - BREEZE_WORD_COUNT;
+  var BREEZE_SENTENCE_COUNT = BANK.filter(function (w) { return w.mode === 'cloze' && BREEZE_IDS.has(w.id); }).length;
 
   /* define 题「看中文释义拼词」有天然歧义：多个英文词常共用同一中文首义项
    * （实测 1414 组、涉及 3288 词）。运行时按中文首义项建同义组，判分时接受
    * 同组词并在反馈中点明目标词，避免用户填了同义词却被判错。 */
   var SYNONYMS = {};
+  function isDefinitionPrompt(w) { return w.mode === 'define' && !w.sentence; }
   (function buildSynonyms() {
     var groups = {};
     BANK.forEach(function (w) {
-      if (w.mode !== 'define') return;
+      if (!isDefinitionPrompt(w)) return;
       var key = String(w.meaning || '').split(/[；;，,／\/]/)[0]
         .replace(/[（(].*?[)）]/g, '').trim().toLowerCase();
       if (!key || key.length < 2) return;
@@ -192,7 +194,7 @@
   }
 
   /* 队列：到期复习（硬性预留）→ 错词 → 新词 → 学习中 → 已掌握，再做分类均衡。
-   * 范围：cloze=精编场景题 / define=扩展释义题 / mixed=两者混合。
+   * 范围：cloze=精编场景题 / define=扩展句子题 / mixed=两者混合。
    * 难度带：core(frq<=5000) / advanced(frq<=15000) / all，只作用于扩展词。
    * 12000 词全量排序开销可控（只在生成当日队列/加练时执行一次）。 */
   function pickByScore(pool, n) {
@@ -299,13 +301,13 @@
     if (!v) return false;
     var accepted = [w.word].concat(w.accepted || []);
     // 释义题接受同义组；场景填词有唯一语境答案，不做宽容
-    if (w.mode === 'define') accepted = accepted.concat(SYNONYMS[w.word] || []);
+    if (isDefinitionPrompt(w)) accepted = accepted.concat(SYNONYMS[w.word] || []);
     return accepted.some(function (a) { return normalize(a) === v; });
   }
   /* 用户填的是同义词而非本题目标词时返回该词，用于反馈里点明差异 */
   function synonymOf(input, w) {
     var v = normalize(input);
-    if (!v || w.mode !== 'define' || normalize(w.word) === v) return '';
+    if (!v || !isDefinitionPrompt(w) || normalize(w.word) === v) return '';
     return (SYNONYMS[w.word] || []).filter(function (a) { return normalize(a) === v; })[0] || '';
   }
 
@@ -362,7 +364,7 @@
   }
 
   function fullSentence(w) {
-    return w.mode === 'define' ? w.word : w.sentence.replace('___', w.word);
+    return isDefinitionPrompt(w) ? w.word : w.sentence.replace('___', w.word);
   }
 
   function speak(w, force, onStart) {
@@ -370,10 +372,10 @@
     stopAudio();
     var mode = state.settings.ttsVoice;
     var candidates = [];
-    if (mode === 'breeze' && BREEZE_IDS.has(w.id)) {
+    if (mode === 'breeze' && w.mode === 'cloze' && BREEZE_IDS.has(w.id)) {
       candidates.push({ dir: 'breeze', label: 'BreezeTTS · Alma' });
     }
-    if (mode === 'breeze' && cloudEnabled && force && accessToken && navigator.onLine !== false) {
+    if (mode === 'breeze' && w.mode === 'cloze' && cloudEnabled && force && accessToken && navigator.onLine !== false) {
       candidates.push({ cloud: true, label: 'BreezeTTS · Alma' });
     }
     if (w.mode === 'cloze' && mode !== 'browser') {
@@ -708,7 +710,7 @@
     var feedback = s.phase === 'feedback';
     var ok = !!s.lastOk;
     var shownAnswer = feedback ? w.word : '';
-    var isDefine = w.mode === 'define';
+    var isDefine = isDefinitionPrompt(w);
     var tpl = isDefine ? null : parseAnswerTemplate(w.word);
 
     var html = '<div class="card">';
@@ -716,8 +718,9 @@
     html += '<span class="chip" style="' + catStyle(w.cat) + '"><span class="dot"></span>' + esc(catName(w.cat)) + ' · ' + esc(w.level) + '</span>';
     html += '<span class="counter">第 <b>' + (s.idx + 1) + '</b> / ' + s.queue.length + ' 题</span>';
     html += '</div>';
+    var sentenceMode = !isDefine && w.mode !== 'cloze';
     html += '<div class="mode-tag ' + (isDefine ? 'define' : 'cloze') + '">' +
-            (isDefine ? '释义拼词 · 看中英释义写出单词' : '场景填词 · 在具体语境中补全句子') + '</div>';
+            (isDefine ? '释义拼词 · 看中英释义写出单词' : (sentenceMode ? '句子练习 · 把单词放进语境' : '场景填词 · 在具体语境中补全句子')) + '</div>';
 
     var pct = Math.round(s.idx / s.queue.length * 100);
     html += '<div class="progress"><div class="progress-fill" style="width:' + pct + '%"></div></div>';
@@ -738,15 +741,26 @@
       html += '<p class="sentence" lang="en">' + maskWord(w, shownAnswer, ok ? 'ok' : 'bad') + '</p>';
       html += '</div>';
     } else {
-      html += '<div class="scenario-box" style="' + catStyle(w.cat) + '">';
-      html += '<div class="scenario-label">场景 / Scenario</div>';
-      html += '<p>' + esc(w.scene) + '</p></div>';
+      if (w.mode === 'cloze') {
+        html += '<div class="scenario-box" style="' + catStyle(w.cat) + '">';
+        html += '<div class="scenario-label">场景 / Scenario</div>';
+        html += '<p>' + esc(w.scene) + '</p></div>';
+      } else {
+        html += '<div class="scenario-box define-box" style="' + catStyle(w.cat) + '">';
+        html += '<div class="scenario-label">释义 / Definition</div>';
+        html += '<p class="define-zh">' + esc(w.meaning) + '</p>';
+        if (w.meaningEn) html += '<p class="define-en" lang="en">' + esc(w.meaningEn) + '</p>';
+        html += '<div class="define-meta">' +
+                (w.pos ? esc(w.pos) + ' · ' : '') + esc(w.level) +
+                (w.frq < 999999 ? ' · 词频 #' + w.frq : '') +
+                (w.tier === 'topic' ? ' · 主题词' : ' · 通用词') + '</div></div>';
+      }
       html += '<div class="sentence-block">';
-      html += '<div class="sentence-label"><span>补全这句话</span>' +
+      html += '<div class="sentence-label"><span>' + (w.mode === 'cloze' ? '补全这句话' : '把单词放进句子') + '</span>' +
               '<button class="speak-btn" data-action="speak" data-id="' + w.id + '">🔊 朗读</button></div>';
       html += '<p class="sentence" lang="en">' + sentenceHtml(w, s, tpl, shownAnswer, ok ? 'ok' : 'bad') + '</p>';
       if (!feedback) html += blankMetaTip(tpl, s.view);
-      if (feedback) html += '<p class="sentence-zh">' + esc(w.translation) + '</p>';
+      if (feedback && w.translation) html += '<p class="sentence-zh">' + esc(w.translation) + '</p>';
       html += '</div>';
     }
 
@@ -778,7 +792,7 @@
     var lenDesc = tpl.spaceCount > 0
       ? '共 <b>' + (tpl.spaceCount + 1) + '</b> 个词（<b>' + tpl.slotCount + '</b> 个字母）'
       : '共 <b>' + tpl.slotCount + '</b> 个字母';
-    var hint = w.mode === 'define'
+    var hint = isDefinitionPrompt(w)
       ? '前 2 个字母 <b>' + esc(w.word.slice(0, 2)) + '</b> · ' + lenDesc
       : '首字母 <b>' + esc(w.word.charAt(0)) + '</b> · ' + lenDesc;
     if (w.pos) hint += ' · ' + esc(w.pos);
@@ -787,7 +801,7 @@
   }
 
   function renderFeedback(w, ok, s) {
-    var isDefine = w.mode === 'define';
+    var isDefine = isDefinitionPrompt(w);
     var h = '<div class="feedback ' + (ok ? 'ok' : 'bad') + '">';
     h += '<div class="fb-head"><span class="fb-icon">' + (ok ? '✓' : '✕') + '</span>' +
          (ok ? '答对了' : (s.lastInput ? '再记一遍' : '这个词记住它')) + '</div>';
@@ -836,7 +850,7 @@
     if (!mount || !s || s.done || s.phase !== 'answering') return;
     var w = wordById(s.queue[s.idx]);
     if (!w) return;
-    if (w.mode === 'define') {
+    if (isDefinitionPrompt(w)) {
       var defineInput = mount.querySelector('.answer-input');
       if (defineInput) {
         defineInput.addEventListener('input', function () { s.draft = this.value; });
@@ -1023,7 +1037,7 @@
     var h = '<div class="card">';
     h += '<h3 class="section-title">词库</h3>';
     h += '<p class="section-sub">共 ' + BANK.length + ' 词（精编场景 ' + CORE_COUNT +
-         ' + 扩展释义 ' + (BANK.length - CORE_COUNT) + '）· 四类各 3000 词，点开任一条查看详情</p>';
+         ' + 扩展句子 ' + (BANK.length - CORE_COUNT) + '）· 四类各 3000 词，点开任一条查看详情</p>';
     h += '<div class="bank-toolbar">';
     h += '<input class="search-input" id="bankSearch" type="search" placeholder="搜索单词、中文或英文释义…" value="' + esc(bankFilter.q) + '">';
     h += '<div class="filter-chips">';
@@ -1032,7 +1046,7 @@
       h += '<button class="filter-chip' + (bankFilter.cat === c.id ? ' active' : '') + '" data-action="bank-filter" data-cat="' + c.id + '">' + esc(c.name) + '</button>';
     });
     h += '</div><div class="filter-chips layer-chips">';
-    [['all', '全部层级'], ['cloze', '精编场景'], ['define', '扩展释义']].forEach(function (x) {
+    [['all', '全部层级'], ['cloze', '精编场景'], ['define', '扩展句子']].forEach(function (x) {
       h += '<button class="filter-chip' + (bankFilter.layer === x[0] ? ' active' : '') +
            '" data-action="bank-layer" data-layer="' + x[0] + '">' + x[1] + '</button>';
     });
@@ -1092,16 +1106,16 @@
            '<span class="word-ph">' + esc(w.phonetic) + '</span><span class="word-pos">' + esc(w.pos) + '</span></div>' +
            '<div class="word-meaning">' + esc(w.meaning) + '</div></div>';
       h += '<div class="word-tags"><span class="tag-cat" style="' + catStyle(w.cat) + '">' + esc(catName(w.cat)) + '</span>' +
-           '<span class="tag-layer ' + w.mode + '">' + (w.mode === 'cloze' ? '精编' : '释义') + '</span>' +
+           '<span class="tag-layer ' + w.mode + '">' + (w.mode === 'cloze' ? '精编' : (w.sentence ? '句子' : '释义')) + '</span>' +
            '<span class="tag-status ' + st + '">' + stTxt + '</span></div>';
       h += '</div>';
       if (bankOpen[w.id]) {
         h += '<div class="word-detail">';
-        if (w.mode === 'cloze') {
-          h += '<div class="wd-block"><div class="wd-k">场景</div><div class="wd-text">' + esc(w.scene) + '</div></div>';
-          h += '<div class="wd-block"><div class="wd-k">目标句</div><div class="wd-sentence">' +
+        if (w.mode === 'cloze' || w.sentence) {
+          if (w.scene) h += '<div class="wd-block"><div class="wd-k">场景</div><div class="wd-text">' + esc(w.scene) + '</div></div>';
+          h += '<div class="wd-block"><div class="wd-k">练习句</div><div class="wd-sentence">' +
                esc(w.sentence).replace('___', '<em>' + esc(w.word) + '</em>') + '</div>' +
-               '<div class="wd-text">' + esc(w.translation) + '</div></div>';
+               (w.translation ? '<div class="wd-text">' + esc(w.translation) + '</div>' : '') + '</div>';
           h += '<div class="wd-block"><div class="wd-k">英文释义 / 搭配</div><div class="wd-text">' +
                esc(w.meaningEn) + '<br>' + esc(w.collocation) + '</div></div>';
         } else {
@@ -1113,7 +1127,7 @@
         }
         h += '<div class="wd-actions">';
         h += '<button class="btn ghost sm" data-action="speak" data-id="' + w.id + '">🔊 ' +
-             (w.mode === 'cloze' ? '朗读' : '听读音') + '</button>';
+             (w.mode === 'cloze' || w.sentence ? '朗读整句' : '听读音') + '</button>';
         h += '<button class="btn primary sm" data-action="bank-practice" data-id="' + w.id + '">练这一条 →</button>';
         h += '</div></div>';
       }
@@ -1249,11 +1263,11 @@
     h += '</div></div></div>';
 
     h += '<div class="setting-row"><div class="setting-info">' +
-         '<h4>练习范围</h4><p>精编场景题是手写语境句；扩展释义题来自真实词典，看中英释义拼出单词。</p></div>' +
+         '<h4>练习范围</h4><p>精编题使用手写语境句；扩展词使用词典释义生成句子，把单词放进句子里练习。</p></div>' +
          '<div class="setting-control"><select class="voice-select" id="scopeSelect">' +
-         '<option value="mixed"' + (state.settings.scope === 'mixed' ? ' selected' : '') + '>混合（约 1/3 场景 + 2/3 释义）</option>' +
+         '<option value="mixed"' + (state.settings.scope === 'mixed' ? ' selected' : '') + '>混合（约 1/3 场景 + 2/3 句子）</option>' +
          '<option value="cloze"' + (state.settings.scope === 'cloze' ? ' selected' : '') + '>仅精编场景填词（' + CORE_COUNT + ' 词）</option>' +
-         '<option value="define"' + (state.settings.scope === 'define' ? ' selected' : '') + '>仅扩展释义拼词（' + (BANK.length - CORE_COUNT) + ' 词）</option>' +
+         '<option value="define"' + (state.settings.scope === 'define' ? ' selected' : '') + '>仅扩展句子练习（' + (BANK.length - CORE_COUNT) + ' 词）</option>' +
          '</select></div></div>';
 
     h += '<div class="setting-row"><div class="setting-info">' +
@@ -1308,7 +1322,7 @@
          '</div></div></div>';
 
     h += '<div class="setting-row"><div class="setting-info">' +
-         '<h4>答对后自动朗读</h4><p>场景题读整句，释义题读单词。手动朗读不受此开关限制。</p></div>' +
+         '<h4>答对后自动朗读</h4><p>句子题读整句，保留的释义题读单词。手动朗读不受此开关限制。</p></div>' +
          '<div class="setting-control"><button class="switch' + (state.settings.speech ? ' on' : '') + '" ' +
          'data-action="toggle-speech" aria-label="自动朗读开关"></button></div></div>';
     h += '</div>';
@@ -1335,12 +1349,12 @@
     h += '<div class="card"><h3 class="section-title">关于</h3>' +
          '<p class="section-sub" style="margin-bottom:0">Cloze · 场景填词 · 四类各 ' +
          Math.round(BANK.length / CATS.length) + ' 词，共 ' + BANK.length + ' 词：精编场景 ' +
-         CORE_COUNT + ' 条（手写语境句 + 神经网络语音 mp3，女声 / 男声各一套），扩展释义 ' +
-         (BANK.length - CORE_COUNT) + ' 条（数据源 ECDICT 开源词典，无编造例句，部分单词已有 BreezeTTS 音频）。' +
+         CORE_COUNT + ' 条（手写语境句 + 神经网络语音 mp3，女声 / 男声各一套），扩展句子 ' +
+         (BANK.length - CORE_COUNT) + ' 条（数据源 ECDICT 开源词典，按英文释义生成稳定句子）。' +
          (cloudEnabled ? '学习进度只保存在本机。云端点读通过 Cloudflare 后端生成音频，后续点读可复用。' :
            '此本地版本无需后端，预生成音频从网站文件加载。') +
          '页面打开后断网仍可答题；语音能否离线播放取决于文件是否可用或浏览器是否安装了本地音色。' +
-         '每日队列会优先安排到期复习（最多 1/4 配额）；释义题接受同义词，并在反馈中标出本题目标词。</p></div>';
+         '每日队列会优先安排到期复习（最多 1/4 配额）。</p></div>';
 
     document.getElementById('settingsMount').innerHTML = h;
     var gi = document.getElementById('goalInput');
@@ -1459,7 +1473,7 @@
     var w = wordById(session.queue[session.idx]);
     if (!w) return;
     var mount = activePracticeMount();
-    var isDefine = w.mode === 'define';
+    var isDefine = isDefinitionPrompt(w);
     var inp = mount ? mount.querySelector(isDefine ? '.answer-input' : '.inline-input') : null;
     var val = skip ? '' : (inp ? inp.value : (session.draft || ''));
     if (!skip && !isDefine) {

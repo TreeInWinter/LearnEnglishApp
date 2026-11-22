@@ -17,7 +17,7 @@ for (const [id, , word] of sandbox.window.EXTENDED_BANK_RAW) bank[id] = word;
 fs.mkdirSync(generated, { recursive: true });
 fs.writeFileSync(path.join(generated, 'speech-bank.json'), JSON.stringify(bank));
 fs.mkdirSync(out, { recursive: true });
-for (const file of ['app.js', 'styles.css', 'words.js', 'bank-extended.js', 'ECDICT-LICENSE.txt']) {
+for (const file of ['app.js', 'styles.css', 'words.js', 'bank-extended.js', 'sentence-prompts.js', 'ECDICT-LICENSE.txt']) {
   fs.copyFileSync(path.join(root, file), path.join(out, file));
 }
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
