@@ -2,6 +2,7 @@
   "name": "learn-english-web",
   "private": true,
   "scripts": {
+    "test": "node --test tests/*.test.mjs",
     "build": "node tools/build_cloudflare.cjs",
     "dev": "npm run build && wrangler dev --ip 127.0.0.1",
     "deploy": "npm run build && wrangler deploy",
