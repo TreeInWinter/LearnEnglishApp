@@ -1,16 +1,19 @@
 import { DurableObject } from 'cloudflare:workers';
 import bank from './.generated/speech-bank.json';
+import { isValidClientId, normalizeProgressSnapshot } from './progress-state.mjs';
 
 const VOICE = 'voc_6t4xfzxkq25c'; // Alma, American English
 const MODEL = 'breeze-tts-2';
 const FORMAT = 'mp3_24000_64';
 const MAX_AUDIO_BYTES = 256 * 1024;
+const MAX_PROGRESS_BYTES = 512 * 1024;
 const NOTES = {
   x02107: 'Pronounce project as a noun, with the stress on the first syllable.',
   x08007: 'Pronounce present as a noun, with the stress on the first syllable.',
   x08145: 'Pronounce record as a noun, with the stress on the first syllable.',
 };
 const ROUTE = /^\/api\/tts\/([a-z][0-9]{2,5})$/;
+const PROGRESS_ROUTE = /^\/api\/progress$/;
 
 function error(status, code) {
   return Response.json({ code }, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -27,6 +30,52 @@ function audio(bytes, hit) {
 
 function getId(request) {
   return new URL(request.url).pathname.match(ROUTE)?.[1];
+}
+
+function progressJson(value, status = 200) {
+  return Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
+}
+
+function progressClient(request) {
+  const value = request.headers.get('X-Learning-Client') || '';
+  return isValidClientId(value) ? value : '';
+}
+
+export class ProgressStore extends DurableObject {
+  constructor(ctx) {
+    super(ctx);
+    this.storage = ctx.storage;
+    this.knownWordIds = new Set(Object.keys(bank));
+  }
+
+  async fetch(request) {
+    if (request.method === 'GET') {
+      const saved = await this.storage.get('snapshot');
+      return progressJson(saved || { snapshot: null, revision: null, updatedAt: 0 });
+    }
+    if (request.method !== 'PUT') return new Response(null, { status: 405, headers: { Allow: 'GET, PUT' } });
+
+    const contentLength = Number(request.headers.get('Content-Length') || 0);
+    if (contentLength > MAX_PROGRESS_BYTES) return progressJson({ code: 'PROGRESS_TOO_LARGE' }, 413);
+    const body = await request.text();
+    if (new TextEncoder().encode(body).byteLength > MAX_PROGRESS_BYTES) {
+      return progressJson({ code: 'PROGRESS_TOO_LARGE' }, 413);
+    }
+
+    let input;
+    try { input = JSON.parse(body); } catch { return progressJson({ code: 'INVALID_PROGRESS' }, 400); }
+    let snapshot;
+    try {
+      snapshot = normalizeProgressSnapshot(input, this.knownWordIds);
+    } catch {
+      return progressJson({ code: 'INVALID_PROGRESS' }, 400);
+    }
+    const updatedAt = Date.now();
+    const revision = crypto.randomUUID();
+    const result = { snapshot, revision, updatedAt };
+    await this.storage.put('snapshot', result);
+    return progressJson(result);
+  }
 }
 
 async function readMp3(response) {
@@ -121,6 +170,25 @@ export class SpeechStore extends DurableObject {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (PROGRESS_ROUTE.test(url.pathname)) {
+      if (request.method !== 'GET' && request.method !== 'PUT') {
+        return new Response(null, { status: 405, headers: { Allow: 'GET, PUT' } });
+      }
+      const origin = request.headers.get('Origin');
+      if (origin && origin !== url.origin) return error(403, 'WRONG_ORIGIN');
+      const clientId = progressClient(request);
+      if (!clientId) return error(400, 'INVALID_LEARNING_CLIENT');
+      if (request.method === 'PUT' && !request.headers.get('Content-Type')?.toLowerCase().startsWith('application/json')) {
+        return error(415, 'JSON_REQUIRED');
+      }
+      if (!env.PROGRESS_STORAGE) return error(503, 'PROGRESS_NOT_CONFIGURED');
+      try {
+        const stub = env.PROGRESS_STORAGE.get(env.PROGRESS_STORAGE.idFromName(clientId));
+        return await stub.fetch(request);
+      } catch {
+        return error(503, 'PROGRESS_UNAVAILABLE');
+      }
+    }
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
     const id = getId(request);
     if (!id || !Object.hasOwn(bank, id)) return error(404, 'UNKNOWN_WORD');

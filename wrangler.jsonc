@@ -11,7 +11,13 @@
     "TTS_DAILY_CREDITS": "400"
   },
   "durable_objects": {
-    "bindings": [{ "name": "TTS_STORAGE", "class_name": "SpeechStore" }]
+    "bindings": [
+      { "name": "TTS_STORAGE", "class_name": "SpeechStore" },
+      { "name": "PROGRESS_STORAGE", "class_name": "ProgressStore" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SpeechStore"] }]
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["SpeechStore"] },
+    { "tag": "v2", "new_sqlite_classes": ["ProgressStore"] }
+  ]
 }
